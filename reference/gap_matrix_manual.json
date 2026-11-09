@@ -1,0 +1,83 @@
+{
+  "_catatan": "Matriks acuan yang disusun manual dari membaca artikel (abstrak + isi). Dipakai sebagai pembanding untuk mengevaluasi output pipeline RAG (lihat langkah evaluasi di rag_gap_matrix.py).",
+  "P01": {
+    "Problem": "LLM berpotensi mendukung sistem pendukung keputusan klinis berbasis pedoman, tetapi rawan halusinasi dan kesulitan membaca format pedoman (tabel, flowchart). Kasus: tata laksana hepatitis C kronis (kepatuhan pada pedoman hanya 36–54%).",
+    "Metode": "Kerangka RAG berbasis in-context: pedoman EASL 2020 dikonversi ke teks (PyPDF2), tabel diubah ke CSV lalu ke daftar teks, ditambah prompt engineering dan few-shot. GPT-4 Turbo (temperature 0,9). Studi ablasi 5 konfigurasi vs baseline tanpa pedoman.",
+    "Dataset": "Pedoman EASL 2020 tentang HCV; 20 pertanyaan (10 berbasis teks, 5 tabel, 5 skenario klinis) buatan dua hepatolog, masing-masing dijalankan 5 kali per konfigurasi.",
+    "Temuan": "Akurasi naik dari 43% (baseline) menjadi 99% dengan kerangka lengkap (p<0,001); teks 100%, tabel 96%, skenario klinis 100%. Few-shot tidak menambah akurasi. Metrik kemiripan (BLEU, ROUGE-L, METEOR) tidak sejalan dengan penilaian akurasi oleh pakar.",
+    "Keterbatasan": "Hanya satu penyakit dan satu pedoman; jumlah pengulangan terbatas; temperature tidak divariasikan; hanya satu LLM (GPT-4 Turbo); penilaian bergantung pada pakar manusia.",
+    "Future work": "Perbaikan parsing tabel/gambar oleh LLM, metrik yang menilai kebenaran faktual dan relevansi klinis, uji dengan LLM lain dan bidang klinis lain, tetap dengan pengawasan pakar."
+  },
+  "P02": {
+    "Problem": "LLM umum (GPT-3.5/GPT-4) kurang pengetahuan spesialis dan penalaran klinis untuk penyakit kompleks; proses penalarannya juga tidak transparan. Studi kasus: tata laksana osteoartritis (OA).",
+    "Metode": "Benchmark empat tingkat (pengetahuan hingga keputusan klinis personal) dan asisten DocOA berbasis GPT-4-1106-preview yang memadukan instruction prompt + RAG (fungsi retrieval OpenAI, struktur data JSON) dan menyertakan bukti. Dibandingkan dengan GPT-3.5, GPT-4, dan zero-shot CoT.",
+    "Dataset": "Enam pedoman klinis OA (AAOS, NICE, OARSI, RACGP, ACR/AF, EULAR); 80 pasien nyata terdeidentifikasi; empat subset QA: GIQA 337, MOQA 145, TSQA 216, RCQA 80.",
+    "Temuan": "Akurasi DocOA 0,92/0,87/0,88/0,72 vs GPT-4 0,38/0,30/0,07/0,01. Ketidakakuratan menurut dokter turun dari 50% (GPT-4) ke 19,3%. Zero-shot CoT tidak memberi peningkatan signifikan. Kegagalan retrieval menyumbang ±12,4% jawaban salah.",
+    "Keterbatasan": "Dataset terbatas dan perlu terus diperbarui; sumber hanya berbahasa Inggris; belum diuji di setting klinis nyata; retrieval kadang tidak lengkap/meleset.",
+    "Future work": "Memperluas dan memperbarui dataset, cakupan multibahasa, memperbaiki retrieval, dan uji klinis di dunia nyata."
+  },
+  "P03": {
+    "Problem": "Malnutrisi sering terjadi di panti wreda (RACF); informasi penting tersebar di catatan EHR tak terstruktur yang sangat banyak sehingga sulit diekstraksi manual.",
+    "Metode": "Llama 2 13B lokal (kuantisasi 4-bit, GPU T4) dengan zero-shot prompting, dengan dan tanpa RAG. Chunk 600 karakter, sentence-transformer Hugging Face, vector store, retrieval MMR LangChain (k=20) dengan filter ID residen dan rentang tanggal.",
+    "Dataset": "EHR terstruktur dan tak terstruktur dari 40 panti wreda di New South Wales, Australia: 25 catatan untuk ringkasan status gizi dan 1.399 catatan untuk ekstraksi faktor risiko malnutrisi; dibandingkan dengan gold standard manual.",
+    "Temuan": "Akurasi ringkasan naik dari 93,25% menjadi 99,25% dengan RAG; ekstraksi faktor risiko ±90% dan tidak membaik dengan RAG. Model berhalusinasi saat informasi tidak eksplisit, dan RAG mengurangi halusinasi ini.",
+    "Keterbatasan": "Sampel kecil (25 residen), satu model dan satu strategi prompt, evaluasi manual, satu negara bagian, sensitif terhadap perubahan prompt; akurasi turun (85%) pada catatan tanpa faktor risiko.",
+    "Future work": "Menguji few-shot, chain-of-thought, dan fine-tuning; model lebih besar (Llama 2 70B); aplikasi RAG lain seperti chatbot klinisi dan agen spesifik tugas."
+  },
+  "P04": {
+    "Problem": "Halusinasi LLM berisiko di layanan kesehatan, sementara pedoman diabetes sering diperbarui sehingga melatih ulang model mahal. Dibutuhkan RAG yang andal lintas bahasa dan pedoman.",
+    "Metode": "Dual RAG: ensemble retriever dense (11 model embedding, mis. OpenAI text-embedding-3-large, Solar Embedding-1-large) + sparse BM25 dengan tokenizer bahasa (ko_kiwi, porter_stemmer). Pipeline AutoRAG, chunk 1.000 karakter overlap 200.",
+    "Dataset": "Pedoman Korean Diabetes Association 2023 (bahasa Korea) dan ADA Standards of Care 2023 (bahasa Inggris); set QA dibuat GPT-4o dan disaring panel pakar medis.",
+    "Temuan": "Solar Embedding-1-large terbaik untuk pedoman Korea (F1 0,258), text-embedding-3-large terbaik untuk pedoman Inggris (F1 0,312); model multibahasa umumnya lebih baik; ensemble dense+sparse meningkatkan cakupan tanpa menurunkan presisi.",
+    "Keterbatasan": "Evaluasi hanya pada tahap retrieval, tidak mengukur langsung akurasi jawaban atau tingkat halusinasi LLM; tambahan biaya komputasi; tabel/gambar sulit dikonversi; rekomendasi on-premise belum diuji.",
+    "Future work": "Teknik ensemble lebih maju, arsitektur multi-LLM (penerjemah, LLM spesialis pedoman, agen koordinator), evaluasi di domain medis lain."
+  },
+  "P05": {
+    "Problem": "Suplemen makanan banyak dipakai tetapi regulasinya lemah dan rawan misinformasi; LLM berdiri sendiri sering memberi jawaban meyakinkan tetapi salah.",
+    "Metode": "RAG berbasis knowledge graph (iDISK2.0 di Neo4j): entitas pertanyaan diekstraksi LLM, dicocokkan dengan text-embedding-3-small (cosine ≥0,75), subgraf diambil lewat Cypher, lalu GPT-4 menyusun jawaban; fallback ke pengetahuan LLM jika tidak ada kecocokan.",
+    "Dataset": "iDISK2.0 dari NMCD, MSKCC, DSLD, LNHPD (174.317 entitas, 6 jenis relasi); uji 473 soal benar/salah dan 329 pilihan ganda dari MSKCC dengan bootstrap 10×100 soal.",
+    "Temuan": "Akurasi iDISK2.0-RAG ±95–99% di empat jenis soal, jauh di atas GPT-4 (52–93%) dan GPT-3.5 (40–85%), terutama untuk interaksi suplemen–obat.",
+    "Keterbatasan": "Soal uji dari satu sumber (MSKCC) dan bukan pertanyaan terbuka nyata; kesalahan ekstraksi entitas dan pemetaan UMLS; fallback ke LLM tidak terverifikasi; relasi tidak di-embed; bergantung pada LLM komersial.",
+    "Future work": "Menambah literatur, media sosial, EHR, dan data pascapasar ke graf; ekstraksi entitas yang lebih baik; KG embedding; pembaruan tahunan; evaluasi pertanyaan terbuka dan kepuasan pengguna."
+  },
+  "P06": {
+    "Problem": "Penilaian kelayakan pra-operasi memakan waktu dan bervariasi antar klinisi; belum jelas apakah LLM-RAG akurat, konsisten, aman, dan dapat digeneralisasi lintas pedoman lokal dan internasional.",
+    "Metode": "RAG dengan LlamaIndex (auto-merging retrieval, top-k 30) pada 10 LLM (GPT-3.5, GPT-4, GPT-4o, Llama 2 7B/13B/70B, Llama 3 8B/70B, Gemini 1.5 Pro, Claude 3 Opus), masing-masing tanpa RAG, dengan pedoman lokal, dan dengan pedoman internasional.",
+    "Dataset": "35 protokol lokal (rumah sakit tersier Singapura) dan 23 pedoman internasional; 14 skenario pra-operasi terdeidentifikasi; 3.234 respons LLM dibandingkan dengan 448 jawaban dokter.",
+    "Temuan": "GPT-4 + RAG pedoman internasional mencapai akurasi 96,4% vs 86,6% manusia (p=0,016), tanpa halusinasi, ±15–20 detik per jawaban (dokter ±10 menit). Llama 2 7B dengan RAG justru berhalusinasi tinggi (32,9–48,6%).",
+    "Keterbatasan": "Hanya 14 skenario simulasi; protokol lokal berbeda antar institusi; fine-tuning tidak diuji; evaluasi halusinasi hanya pada bagian klinis relevan; kerangka S.C.O.R.E. belum dipublikasikan; belum ada benchmark standar RAG medis.",
+    "Future work": "Membandingkan RAG dengan fine-tuning, benchmark khusus layanan kesehatan, uji di alur kerja klinis nyata, opsi model lebih murah, protokol pemutakhiran basis pengetahuan pedoman."
+  },
+  "P07": {
+    "Problem": "Pasien osteoartritis lutut sering berhenti menjalankan latihan fisik tanpa pendampingan klinisi; dibutuhkan pendamping berbasis bukti untuk meningkatkan kepatuhan.",
+    "Metode": "Chatbot Telegram dengan Self-RAG + chain-of-thought dalam alur LangGraph (retrieval, penilaian dokumen, generasi, transformasi query, penilaian jawaban, penerjemahan, format ramah pasien); Mistral 7B via Ollama; vector store ChromaDB.",
+    "Dataset": "Basis pengetahuan dari rapid systematic review (PRISMA, 9.355 rekaman): 6 pedoman lolos penilaian AGREE II beserta studi yang dirujuknya; evaluasi oleh 40 tenaga kesehatan di Chile.",
+    "Temuan": "Skor versi perbaikan naik signifikan dibanding versi awal (mis. terapi non-farmakologis 4,15→4,40; p=0,0068; Cohen's d total 0,77) dan lebih stabil dibanding ChatGPT (GPT-4o mini).",
+    "Keterbatasan": "Sampel kenyamanan 40 profesional, bukan pasien; dampak klinis belum diketahui; basis pengetahuan hanya 6 pedoman; deskripsi optimasi model tidak konsisten antara abstrak dan metode.",
+    "Future work": "Mengevaluasi efek chatbot terhadap luaran klinis pada pasien osteoartritis lutut."
+  },
+  "P08": {
+    "Problem": "Penderita obesitas dan diabetes tipe 2 butuh rekomendasi diet yang personal, sesuai pedoman, sekaligus berkelanjutan, dan mudah dipahami.",
+    "Metode": "Sistem RAG dengan LLaMA3 lokal (privasi) dan ChromaDB; komponen 'virtual nutritionist' memperbaiki resep secara iteratif hingga memenuhi kriteria gizi dan keberlanjutan; data gizi dari USDA FoodData Central; penjelasan explainable AI per bahan.",
+    "Dataset": "Pedoman diet RIVM (diabetes tipe 2, obesitas, diet berkelanjutan), data produk musiman EUFIC, USDA FoodData Central, ADA; evaluasi 1.000 resep smoothie dari kombinasi acak usia, BMI, preferensi diet.",
+    "Temuan": "80,1% resep memenuhi target gizi (kalori, serat, lemak) dan 92% memenuhi kriteria keberlanjutan; kegagalan utama pada gula alami tinggi dan serat rendah.",
+    "Keterbatasan": "Beban glikemik tidak dianalisis; bahan di luar musim tidak otomatis diganti; data bias ke bahan Barat; komputasi berat; belum divalidasi dengan klinisi atau pasien.",
+    "Future work": "Database bahan yang lebih beragam secara budaya, analisis beban glikemik, substitusi otomatis, validasi dengan tenaga kesehatan dan pasien, integrasi EHR dan wearable (aktivitas, biomarker)."
+  },
+  "P09": {
+    "Problem": "LLM di kesehatan masyarakat bisa menghasilkan jawaban masuk akal tetapi salah; fine-tuning dan RAG standar hanya mengatasi sebagian.",
+    "Metode": "MEGA-RAG empat tahap: retrieval multi-sumber (FAISS dense + BM25 + knowledge graph), generasi beberapa kandidat jawaban + rerank cross-encoder, evaluasi keselarasan semantik-bukti (cosine, BERTScore), dan klarifikasi mandiri dengan retrieval ulang. LLM LLaMA3-70B.",
+    "Dataset": "Sumber PubMed, WHO IRIS, CPubMed-KG; benchmark HealthQuestDB berisi 890 pasangan tanya-jawab ya/tidak yang dianotasi dua pakar.",
+    "Temuan": "Akurasi 0,7913 dan F1 0,7904, lebih tinggi dari baseline terbaik (PubMedGPT, akurasi 0,744) dan LLM+RAG standar (F1 0,6739); false positive turun dari 224 ke 114.",
+    "Keterbatasan": "Desain multi-tahap menambah beban komputasi tanpa benchmark efisiensi; dioptimalkan untuk pertanyaan biner; hanya satu benchmark internal; klaim penurunan halusinasi >40% tidak dirinci metriknya.",
+    "Future work": "Evaluasi di MedQA dan PubMedQA, integrasi pedoman secara dinamis, multibahasa dan lintas wilayah, umpan balik klinisi, kompresi retrieval di perangkat."
+  },
+  "P10": {
+    "Problem": "Manajemen diri diabetes berlangsung di luar klinik; pasien bergantung pada mesin pencari/aplikasi yang generik atau tidak andal, sementara chatbot umum bisa berhalusinasi.",
+    "Metode": "DTalksBot: GPT-4 + RAG; sumber tervalidasi dipecah per kalimat, di-embed, retrieval top-5 dengan cosine similarity; dibatasi hanya topik diabetes. Studi kualitatif dua bagian (pasien dan klinisi), analisis tematik.",
+    "Dataset": "Sumber: National Health Information Portal Korea, Korean Diabetes Association, CDC AS. Partisipan: 24 pasien diabetes Korea (643 pertanyaan) dan 4 dokter spesialis.",
+    "Temuan": "Skor kegunaan 4,06 dan kredibilitas 4,08 (skala 5), tetapi empati 3,08 dan dukungan emosional 3,42. Pasien menghargai jawaban cepat dan fokus; klinisi menilai bot tepat menyerahkan keputusan obat ke dokter, tetapi kurang personal (mis. saran protein tinggi tanpa mempertimbangkan penyakit ginjal).",
+    "Keterbatasan": "Sampel kecil dan hanya Korea; desain kualitatif formatif tanpa luaran klinis; tidak ada akses ke data kesehatan pribadi sehingga personalisasi terbatas; hanya 4 klinisi.",
+    "Future work": "Integrasi EHR dan continuous glucose monitoring, personalisasi berdasarkan usia dan komorbiditas, basis pengetahuan yang diperbarui pakar, dukungan emosional, dan posisi chatbot sebagai kolaborator dalam alur klinis."
+  }
+}
