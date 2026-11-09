@@ -247,31 +247,84 @@ class GroqLLM:
         self.model = model
 
     def chat_json(self, system: str, user: str, max_tokens: int = 2000) -> tuple[dict, dict]:
+        use_json_mode = True
+        last = None
         for attempt in range(6):
             try:
                 t0 = time.time()
-                r = self.client.chat.completions.create(
-                    model=self.model,
-                    temperature=0,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                    messages=[{"role": "system", "content": system},
-                              {"role": "user", "content": user}],
-                )
+                kwargs = dict(model=self.model, temperature=0, max_tokens=max_tokens,
+                              messages=[{"role": "system", "content": system},
+                                        {"role": "user", "content": user}])
+                if use_json_mode:
+                    kwargs["response_format"] = {"type": "json_object"}
+                r = self.client.chat.completions.create(**kwargs)
                 meta = {
                     "latency_s": round(time.time() - t0, 2),
                     "prompt_tokens": r.usage.prompt_tokens,
                     "completion_tokens": r.usage.completion_tokens,
                 }
-                return json.loads(r.choices[0].message.content), meta
-            except Exception as e:  # noqa: BLE001 — rate limit free tier / JSON rusak
-                if "413" in str(e) or "too large" in str(e).lower():
-                    raise RuntimeError("Prompt terlalu besar untuk batas token Groq. Turunkan TOP_K "
-                                       "(mis. os.environ['TOP_K']='2') lalu restart & jalankan ulang.") from e
-                wait = 15 * (attempt + 1)
-                print(f"   [groq] {type(e).__name__}: {str(e)[:120]} -> coba lagi {wait}s")
+                return _parse_json(r.choices[0].message.content), meta
+            except Exception as e:  # noqa: BLE001
+                last = e
+                msg = str(e).lower()
+                status = getattr(e, "status_code", None)
+                # --- error yang tidak akan sembuh dengan menunggu: berhenti dengan pesan jelas
+                if status == 401 or "invalid api key" in msg or "authentication" in msg:
+                    raise RuntimeError("API key Groq ditolak (401). Cek Secrets: nama harus GROQ_API_KEY, "
+                                       "Notebook access aktif, key baru belum dihapus.") from e
+                if status == 404 or "model_not_found" in msg or "decommissioned" in msg or "does not exist" in msg:
+                    raise RuntimeError(f"Model '{self.model}' tidak tersedia di Groq. Lihat daftar model di "
+                                       "console.groq.com/docs/models lalu set os.environ['LLM_MODEL']='<nama model>' "
+                                       "dan restart session.") from e
+                if status == 413 or "too large" in msg:
+                    raise RuntimeError("Prompt terlalu besar untuk batas token Groq. Set os.environ['TOP_K']='2' "
+                                       "lalu restart session & jalankan ulang.") from e
+                if "per day" in msg or "tpd" in msg or "rpd" in msg:
+                    raise RuntimeError("Kuota HARIAN Groq untuk model ini habis. Tunggu reset (lihat pesan), "
+                                       "atau ganti model: os.environ['LLM_MODEL']='llama-3.1-8b-instant'.") from e
+                # --- JSON mode gagal (400 json_validate_failed): coba tanpa JSON mode
+                if status == 400 and use_json_mode:
+                    use_json_mode = False
+                    print(f"   [groq] JSON mode gagal ({str(e)[:100]}) -> coba tanpa JSON mode")
+                    continue
+                if isinstance(e, json.JSONDecodeError):
+                    print("   [groq] jawaban bukan JSON valid -> coba lagi")
+                    continue
+                # --- rate limit per menit / gangguan jaringan: tunggu lalu ulang
+                wait = 20 * (attempt + 1)
+                print(f"   [groq] {type(e).__name__} (status {status}): {str(e)[:200]} -> coba lagi {wait}s")
                 time.sleep(wait)
-        raise RuntimeError("Groq gagal setelah 6 percobaan")
+        raise RuntimeError(f"Groq gagal setelah 6 percobaan. Error terakhir: {type(last).__name__}: {str(last)[:300]}")
+
+
+def _parse_json(text: str) -> dict:
+    """Ambil objek JSON dari jawaban LLM (toleran terhadap ```json ... ``` atau teks pembuka)."""
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        return json.loads(text[start:end + 1])
+
+
+def check_groq(model: str | None = None) -> None:
+    """Diagnosis cepat: key valid? model tersedia? satu panggilan kecil berhasil?"""
+    from groq import Groq
+
+    key = os.environ.get("GROQ_API_KEY", "")
+    print("GROQ_API_KEY terbaca:", bool(key), "| awalan gsk_:", key.startswith("gsk_"), "| panjang:", len(key))
+    client = Groq(api_key=key)
+    ids = sorted(m.id for m in client.models.list().data)
+    model = model or LLM_MODEL
+    print("Model dipakai:", model, "| tersedia:", model in ids)
+    if model not in ids:
+        print("Model yang tersedia:", ", ".join(i for i in ids if "llama" in i or "gpt-oss" in i or "qwen" in i))
+        return
+    r = client.chat.completions.create(model=model, max_tokens=20, temperature=0,
+                                       messages=[{"role": "user", "content": "Balas: OK"}])
+    print("Tes panggilan:", r.choices[0].message.content)
 
 
 SYSTEM_EXTRACT = """Anda asisten riset yang menyusun literature gap matrix.
@@ -591,11 +644,17 @@ def run(embedder=None, llm=None, download: bool = True, only: list[str] | None =
         if not pdf.exists():
             print(f"[lewati] {p['id']}: PDF belum ada di {pdf}")
             continue
-        pages = extract_pages(pdf)
-        chunks = chunk_pages(p["id"], pages)
-        pidx = build_index(p["id"], chunks, embedder)
-        print(f"[{p['id']}] {len(pages)} halaman, {len(chunks)} chunk -> ekstraksi ...")
-        row = extract_row(p, pidx, embedder, llm, log)
+        cache = OUT_DIR / f"cache_{p['id']}.json"
+        if cache.exists():  # hasil paper ini sudah ada -> tidak memanggil Groq lagi
+            row = json.loads(cache.read_text(encoding="utf-8"))
+            print(f"[{p['id']}] pakai cache (sudah diproses sebelumnya)")
+        else:
+            pages = extract_pages(pdf)
+            chunks = chunk_pages(p["id"], pages)
+            pidx = build_index(p["id"], chunks, embedder)
+            print(f"[{p['id']}] {len(pages)} halaman, {len(chunks)} chunk -> ekstraksi ...")
+            row = extract_row(p, pidx, embedder, llm, log)
+            cache.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
         evidence += row.pop("_evidence")
         rows.append(row)
 
