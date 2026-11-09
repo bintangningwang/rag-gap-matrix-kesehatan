@@ -47,12 +47,12 @@ REFERENCE_JSON = BASE / "reference" / "gap_matrix_manual.json"
 
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-CHUNK_SIZE = 1000
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = 200
-TOP_K = 4
+TOP_K = int(os.getenv("TOP_K", "3"))
 MIN_SUPPORT = 0.45          # sel dengan skor dukungan di bawah ini ditandai untuk dicek manual
 
-GITHUB_URL = os.getenv("GITHUB_URL", "https://github.com/USERNAME/rag-gap-matrix-kesehatan")
+GITHUB_URL = os.getenv("GITHUB_URL", "https://github.com/bintangningwang/rag-gap-matrix-kesehatan")
 NAMA = os.getenv("NAMA_MAHASISWA", "Bintang Nugraha Kasaluri Satrianingwang")
 TOPIK_USULAN = os.getenv(
     "TOPIK_USULAN",
@@ -227,7 +227,8 @@ def build_index(paper_id: str, chunks: list[Chunk], embedder) -> PaperIndex:
 # ----------------------------------------------------------------------------
 # 5. Retrieval
 # ----------------------------------------------------------------------------
-def retrieve(pidx: PaperIndex, queries: list[str], embedder, k: int = TOP_K) -> list[tuple[Chunk, float]]:
+def retrieve(pidx: PaperIndex, queries: list[str], embedder, k: int | None = None) -> list[tuple[Chunk, float]]:
+    k = k or TOP_K
     qv = embedder.encode(queries)
     q = qv.mean(axis=0, keepdims=True)
     q = q / (np.linalg.norm(q) + 1e-9)
@@ -264,6 +265,9 @@ class GroqLLM:
                 }
                 return json.loads(r.choices[0].message.content), meta
             except Exception as e:  # noqa: BLE001 — rate limit free tier / JSON rusak
+                if "413" in str(e) or "too large" in str(e).lower():
+                    raise RuntimeError("Prompt terlalu besar untuk batas token Groq. Turunkan TOP_K "
+                                       "(mis. os.environ['TOP_K']='2') lalu restart & jalankan ulang.") from e
                 wait = 15 * (attempt + 1)
                 print(f"   [groq] {type(e).__name__}: {str(e)[:120]} -> coba lagi {wait}s")
                 time.sleep(wait)
@@ -281,11 +285,18 @@ Keluarkan JSON dengan kunci: {cols}. Tiap kunci berisi objek {{"isi": str, "hala
 
 
 def build_context(retrieved: dict[str, list[tuple[Chunk, float]]]) -> str:
+    """Gabungkan chunk tiap kolom; chunk yang sama hanya dikirim sekali (hemat token free tier)."""
+    seen: dict[int, str] = {}
     parts = []
     for col, hits in retrieved.items():
         parts.append(f"### Potongan relevan untuk kolom '{col}'")
         for ch, _ in hits:
-            parts.append(f"[hlm. {ch.page}] {ch.text}")
+            key = id(ch)
+            if key in seen:
+                parts.append(f"(lihat potongan {seen[key]} di atas)")
+                continue
+            seen[key] = f"#{len(seen) + 1}"
+            parts.append(f"{seen[key]} [hlm. {ch.page}] {ch.text}")
     return "\n".join(parts)
 
 
