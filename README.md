@@ -14,7 +14,7 @@ papers.csv ──► unduh PDF (open access)
 3. Embedding             sentence-transformers/paraphrase-multilingual-mpnet-base-v2 (lokal, 768 dim)
 4. Vector store          FAISS IndexFlatIP (cosine), satu indeks per paper
 5. Retrieval             per kolom matriks: rata-rata embedding 3 query (EN+ID) → top-3 chunk (atur lewat env TOP_K)
-6. Generation            Groq llama-3.3-70b-versatile, temperature 0, output JSON + halaman sumber
+6. Generation            Groq openai/gpt-oss-120b, temperature 0, output JSON + halaman sumber
    │
    ▼
 Analisis gap (LLM)  →  Evaluasi  →  outputs/  (DOCX untuk Kulino, XLSX, MD, CSV)

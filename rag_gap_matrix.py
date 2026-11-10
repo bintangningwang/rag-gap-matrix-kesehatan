@@ -10,7 +10,7 @@ Enam tahap RAG (sesuai materi Bab 5–6):
   3. Embedding            : sentence-transformers paraphrase-multilingual-mpnet-base-v2 (lokal, 768 dim)
   4. Penyimpanan vektor   : satu indeks FAISS (inner product = cosine) per paper
   5. Retrieval            : untuk tiap kolom matriks, query bilingual -> top-k chunk dari paper itu
-  6. Augmented generation : Groq (llama-3.3-70b-versatile), temperature 0, output JSON + nomor halaman
+  6. Augmented generation : Groq (openai/gpt-oss-120b, bisa diganti lewat env LLM_MODEL), temperature 0, output JSON + nomor halaman
 
 Tambahan:
   - Evaluasi otomatis: skor dukungan (faithfulness proxy) tiap sel, latency, token
@@ -46,7 +46,8 @@ OUT_DIR = BASE / "outputs"
 REFERENCE_JSON = BASE / "reference" / "gap_matrix_manual.json"
 
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))   # model reasoning (gpt-oss/qwen) butuh ruang untuk berpikir
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = 200
 TOP_K = int(os.getenv("TOP_K", "3"))
@@ -246,7 +247,7 @@ class GroqLLM:
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
         self.model = model
 
-    def chat_json(self, system: str, user: str, max_tokens: int = 2000) -> tuple[dict, dict]:
+    def chat_json(self, system: str, user: str, max_tokens: int | None = None) -> tuple[dict, dict]:
         use_json_mode = True
         last = None
         for attempt in range(6):
@@ -255,6 +256,9 @@ class GroqLLM:
                 kwargs = dict(model=self.model, temperature=0, max_tokens=max_tokens,
                               messages=[{"role": "system", "content": system},
                                         {"role": "user", "content": user}])
+                kwargs["max_tokens"] = max_tokens or MAX_TOKENS
+                if self.model.startswith("openai/gpt-oss"):
+                    kwargs["reasoning_effort"] = "low"   # hemat token & waktu
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
                 r = self.client.chat.completions.create(**kwargs)
@@ -263,7 +267,10 @@ class GroqLLM:
                     "prompt_tokens": r.usage.prompt_tokens,
                     "completion_tokens": r.usage.completion_tokens,
                 }
-                return _parse_json(r.choices[0].message.content), meta
+                content = r.choices[0].message.content or ""
+                if not content.strip():
+                    raise json.JSONDecodeError("jawaban kosong (token habis untuk reasoning?)", "", 0)
+                return _parse_json(content), meta
             except Exception as e:  # noqa: BLE001
                 last = e
                 msg = str(e).lower()
@@ -281,7 +288,7 @@ class GroqLLM:
                                        "lalu restart session & jalankan ulang.") from e
                 if "per day" in msg or "tpd" in msg or "rpd" in msg:
                     raise RuntimeError("Kuota HARIAN Groq untuk model ini habis. Tunggu reset (lihat pesan), "
-                                       "atau ganti model: os.environ['LLM_MODEL']='llama-3.1-8b-instant'.") from e
+                                       "atau ganti model: os.environ['LLM_MODEL']='openai/gpt-oss-20b'.") from e
                 # --- JSON mode gagal (400 json_validate_failed): coba tanpa JSON mode
                 if status == 400 and use_json_mode:
                     use_json_mode = False
@@ -403,7 +410,7 @@ def analyze_gap(matrix: pd.DataFrame, llm, log: RunLog, topik: str = TOPIK_USULA
     compact = matrix[cols].to_dict(orient="records")
     user = (f"Rencana topik paper kelompok: {topik}\n\nGAP MATRIX (JSON):\n"
             f"{json.dumps(compact, ensure_ascii=False)}")
-    data, meta = llm.chat_json(SYSTEM_GAP, user, max_tokens=3000)
+    data, meta = llm.chat_json(SYSTEM_GAP, user, max_tokens=max(MAX_TOKENS, 6000))
     log.add(tahap="analisis_gap", paper="ALL", **meta)
     return data
 
